@@ -1,0 +1,300 @@
+package org.ka2ddo.yaac.gui.tile;
+
+import java.awt.Color;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * Manages callsign→color assignments for the StationPushpinLayer.
+ * Persists to ~/.yaac/station-colors.json.
+ */
+public class StationColorManager {
+
+    private static final String CONFIG_FILE = "station-colors.json";
+
+    /** Default pushpin color (red) for unassigned stations. */
+    private static final Color DEFAULT_COLOR = new Color(220, 40, 40);
+
+    /** Preset palette of 10 high-contrast SAR colors. */
+    public static final Color[] PRESET_COLORS = {
+        new Color(220, 40, 40),    // Red
+        new Color(30, 100, 220),   // Blue
+        new Color(40, 180, 50),    // Green
+        new Color(240, 150, 0),    // Orange
+        new Color(150, 50, 200),   // Purple
+        new Color(0, 180, 180),    // Teal
+        new Color(200, 50, 150),   // Magenta
+        new Color(120, 80, 40),    // Brown
+        new Color(60, 60, 60),     // Dark Gray
+        new Color(0, 120, 60),     // Dark Green
+    };
+
+    /** Human-readable names for the preset colors. */
+    public static final String[] PRESET_NAMES = {
+        "Red", "Blue", "Green", "Orange", "Purple",
+        "Teal", "Magenta", "Brown", "Dark Gray", "Dark Green"
+    };
+
+    private final Map<String, Color> stationColors = new LinkedHashMap<>();
+    private String configPath;
+
+    /**
+     * Get the color assigned to a callsign, or the default red if unassigned.
+     */
+    public Color getColor(String callsign) {
+        if (callsign == null) return DEFAULT_COLOR;
+        Color c = stationColors.get(callsign.toUpperCase().trim());
+        return c != null ? c : DEFAULT_COLOR;
+    }
+
+    /**
+     * Assign a color to a callsign.
+     */
+    public void setColor(String callsign, Color c) {
+        if (callsign == null || callsign.trim().isEmpty()) return;
+        stationColors.put(callsign.toUpperCase().trim(), c);
+    }
+
+    /**
+     * Remove a callsign's color assignment (reverts to default).
+     */
+    public void removeColor(String callsign) {
+        if (callsign != null) {
+            stationColors.remove(callsign.toUpperCase().trim());
+        }
+    }
+
+    /**
+     * Get all current callsign→color assignments.
+     */
+    public Map<String, Color> getAssignments() {
+        return Collections.unmodifiableMap(stationColors);
+    }
+
+    /**
+     * Get the default color used for unassigned stations.
+     */
+    public Color getDefaultColor() {
+        return DEFAULT_COLOR;
+    }
+
+    /**
+     * Load color assignments from ~/.yaac/station-colors.json.
+     */
+    public void loadColors(String yaacConfigDir) {
+        this.configPath = yaacConfigDir + File.separator + CONFIG_FILE;
+        File configFile = new File(configPath);
+
+        if (!configFile.exists()) return;
+
+        try {
+            String json = readFile(configFile);
+            parseJson(json);
+        } catch (Exception e) {
+            System.err.println("StationColorManager: error loading " +
+                    configPath + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * Save current assignments to JSON config file.
+     */
+    public void saveColors() {
+        if (configPath == null) return;
+
+        try {
+            File configFile = new File(configPath);
+            File parentDir = configFile.getParentFile();
+            if (parentDir != null && !parentDir.exists()) {
+                parentDir.mkdirs();
+            }
+
+            String json = toJson();
+            BufferedWriter writer = new BufferedWriter(new FileWriter(configFile));
+            writer.write(json);
+            writer.close();
+        } catch (IOException e) {
+            System.err.println("StationColorManager: error saving config: " +
+                    e.getMessage());
+        }
+    }
+
+    // --- JSON serialization (hand-rolled, same pattern as TileSourceManager) ---
+
+    private String toJson() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\n");
+        sb.append("  \"stations\": [\n");
+
+        int i = 0;
+        for (Map.Entry<String, Color> entry : stationColors.entrySet()) {
+            Color c = entry.getValue();
+            sb.append("    {");
+            sb.append("\"callsign\": \"").append(escapeJson(entry.getKey())).append("\", ");
+            sb.append("\"r\": ").append(c.getRed()).append(", ");
+            sb.append("\"g\": ").append(c.getGreen()).append(", ");
+            sb.append("\"b\": ").append(c.getBlue());
+            sb.append("}");
+            if (i < stationColors.size() - 1) sb.append(",");
+            sb.append("\n");
+            i++;
+        }
+
+        sb.append("  ]\n");
+        sb.append("}\n");
+        return sb.toString();
+    }
+
+    private void parseJson(String json) {
+        stationColors.clear();
+
+        // Find "stations" array
+        int stationsIdx = json.indexOf("\"stations\"");
+        if (stationsIdx == -1) return;
+
+        int arrayStart = json.indexOf('[', stationsIdx);
+        int arrayEnd = findMatchingBracket(json, arrayStart);
+        if (arrayStart == -1 || arrayEnd == -1) return;
+
+        String arrayContent = json.substring(arrayStart + 1, arrayEnd);
+
+        // Parse each station object
+        int depth = 0;
+        int objStart = -1;
+        for (int i = 0; i < arrayContent.length(); i++) {
+            char c = arrayContent.charAt(i);
+            if (c == '{') {
+                if (depth == 0) objStart = i;
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0 && objStart >= 0) {
+                    String objJson = arrayContent.substring(objStart, i + 1);
+                    parseStationObject(objJson);
+                    objStart = -1;
+                }
+            }
+        }
+    }
+
+    private void parseStationObject(String json) {
+        String callsign = extractJsonString(json, "callsign");
+        if (callsign == null || callsign.trim().isEmpty()) return;
+
+        Integer r = extractJsonInt(json, "r");
+        Integer g = extractJsonInt(json, "g");
+        Integer b = extractJsonInt(json, "b");
+
+        if (r == null || g == null || b == null) return;
+
+        r = Math.max(0, Math.min(255, r));
+        g = Math.max(0, Math.min(255, g));
+        b = Math.max(0, Math.min(255, b));
+
+        stationColors.put(callsign.toUpperCase().trim(),
+                new Color(r, g, b));
+    }
+
+    // --- Minimal JSON helpers ---
+
+    private static String escapeJson(String s) {
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static String extractJsonString(String json, String key) {
+        String pattern = "\"" + key + "\"";
+        int idx = json.indexOf(pattern);
+        if (idx == -1) return null;
+
+        int colonIdx = json.indexOf(':', idx + pattern.length());
+        if (colonIdx == -1) return null;
+
+        int quoteStart = json.indexOf('"', colonIdx + 1);
+        if (quoteStart == -1) return null;
+
+        int quoteEnd = quoteStart + 1;
+        while (quoteEnd < json.length()) {
+            char c = json.charAt(quoteEnd);
+            if (c == '\\') {
+                quoteEnd += 2;
+            } else if (c == '"') {
+                break;
+            } else {
+                quoteEnd++;
+            }
+        }
+
+        return json.substring(quoteStart + 1, quoteEnd)
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\");
+    }
+
+    private static Integer extractJsonInt(String json, String key) {
+        String pattern = "\"" + key + "\"";
+        int idx = json.indexOf(pattern);
+        if (idx == -1) return null;
+
+        int colonIdx = json.indexOf(':', idx + pattern.length());
+        if (colonIdx == -1) return null;
+
+        int start = colonIdx + 1;
+        while (start < json.length() && json.charAt(start) == ' ') start++;
+
+        int end = start;
+        while (end < json.length() &&
+                (Character.isDigit(json.charAt(end)) || json.charAt(end) == '-')) {
+            end++;
+        }
+
+        if (end == start) return null;
+        try {
+            return Integer.parseInt(json.substring(start, end));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static int findMatchingBracket(String json, int openPos) {
+        if (openPos < 0 || openPos >= json.length()) return -1;
+        char open = json.charAt(openPos);
+        char close = (open == '[') ? ']' : '}';
+        int depth = 1;
+        boolean inString = false;
+
+        for (int i = openPos + 1; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (c == '\\' && inString) {
+                i++;
+                continue;
+            }
+            if (c == '"') {
+                inString = !inString;
+            } else if (!inString) {
+                if (c == open) depth++;
+                else if (c == close) {
+                    depth--;
+                    if (depth == 0) return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private static String readFile(File file) throws IOException {
+        BufferedReader reader = new BufferedReader(new FileReader(file));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            sb.append(line).append('\n');
+        }
+        reader.close();
+        return sb.toString();
+    }
+}

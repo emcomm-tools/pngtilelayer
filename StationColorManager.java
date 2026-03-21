@@ -42,7 +42,23 @@ public class StationColorManager {
         "Teal", "Magenta", "Brown", "Dark Gray", "Dark Green"
     };
 
+    /** Default minimum distance (meters) between consecutive trail points. */
+    public static final int DEFAULT_MIN_DISTANCE = 20;
+
+    /** Default phase-out time (minutes). 0 = disabled. */
+    public static final int DEFAULT_PHASE_OUT = 30;
+
+    /** Default station opacity (fully opaque). */
+    public static final int DEFAULT_OPACITY = 255;
+
+    /** Default trail segment count (number of historical lines to show). */
+    public static final int DEFAULT_TRAIL_COUNT = 3;
+
     private final Map<String, Color> stationColors = new LinkedHashMap<>();
+    private final Map<String, Integer> stationMinDistance = new LinkedHashMap<>();
+    private final Map<String, Integer> stationPhaseOut = new LinkedHashMap<>();
+    private final Map<String, Integer> stationOpacity = new LinkedHashMap<>();
+    private final Map<String, Integer> stationTrailCount = new LinkedHashMap<>();
     private String configPath;
 
     /**
@@ -69,6 +85,77 @@ public class StationColorManager {
         if (callsign != null) {
             stationColors.remove(callsign.toUpperCase().trim());
         }
+    }
+
+    /**
+     * Get the minimum distance (meters) for a callsign, or the default if unset.
+     */
+    public int getMinDistance(String callsign) {
+        if (callsign == null) return DEFAULT_MIN_DISTANCE;
+        Integer d = stationMinDistance.get(callsign.toUpperCase().trim());
+        return d != null ? d : DEFAULT_MIN_DISTANCE;
+    }
+
+    /**
+     * Set the minimum distance (meters) for a callsign.
+     */
+    public void setMinDistance(String callsign, int meters) {
+        if (callsign == null || callsign.trim().isEmpty()) return;
+        stationMinDistance.put(callsign.toUpperCase().trim(), meters);
+    }
+
+    /**
+     * Get the phase-out time (minutes) for a callsign, or the default if unset.
+     * 0 means disabled.
+     */
+    public int getPhaseOut(String callsign) {
+        if (callsign == null) return DEFAULT_PHASE_OUT;
+        Integer p = stationPhaseOut.get(callsign.toUpperCase().trim());
+        return p != null ? p : DEFAULT_PHASE_OUT;
+    }
+
+    /**
+     * Set the phase-out time (minutes) for a callsign. 0 = disabled.
+     */
+    public void setPhaseOut(String callsign, int minutes) {
+        if (callsign == null || callsign.trim().isEmpty()) return;
+        stationPhaseOut.put(callsign.toUpperCase().trim(), minutes);
+    }
+
+    /**
+     * Get the opacity (0-255) for a callsign, or the default if unset.
+     */
+    public int getOpacity(String callsign) {
+        if (callsign == null) return DEFAULT_OPACITY;
+        Integer o = stationOpacity.get(callsign.toUpperCase().trim());
+        return o != null ? o : DEFAULT_OPACITY;
+    }
+
+    /**
+     * Set the opacity (0-255) for a callsign.
+     */
+    public void setOpacity(String callsign, int opacity) {
+        if (callsign == null || callsign.trim().isEmpty()) return;
+        stationOpacity.put(callsign.toUpperCase().trim(),
+                Math.max(0, Math.min(255, opacity)));
+    }
+
+    /**
+     * Get the trail count for a callsign, or the default if unset.
+     * 0 = no trail lines. Default = 3.
+     */
+    public int getTrailCount(String callsign) {
+        if (callsign == null) return DEFAULT_TRAIL_COUNT;
+        Integer t = stationTrailCount.get(callsign.toUpperCase().trim());
+        return t != null ? t : DEFAULT_TRAIL_COUNT;
+    }
+
+    /**
+     * Set the trail count for a callsign. 0 = no trail lines.
+     */
+    public void setTrailCount(String callsign, int count) {
+        if (callsign == null || callsign.trim().isEmpty()) return;
+        stationTrailCount.put(callsign.toUpperCase().trim(), Math.max(0, count));
     }
 
     /**
@@ -141,6 +228,22 @@ public class StationColorManager {
             sb.append("\"r\": ").append(c.getRed()).append(", ");
             sb.append("\"g\": ").append(c.getGreen()).append(", ");
             sb.append("\"b\": ").append(c.getBlue());
+            Integer minDist = stationMinDistance.get(entry.getKey());
+            if (minDist != null) {
+                sb.append(", \"minDistance\": ").append(minDist);
+            }
+            Integer phaseOut = stationPhaseOut.get(entry.getKey());
+            if (phaseOut != null) {
+                sb.append(", \"phaseOut\": ").append(phaseOut);
+            }
+            Integer opacity = stationOpacity.get(entry.getKey());
+            if (opacity != null) {
+                sb.append(", \"opacity\": ").append(opacity);
+            }
+            Integer trailCount = stationTrailCount.get(entry.getKey());
+            if (trailCount != null) {
+                sb.append(", \"trailCount\": ").append(trailCount);
+            }
             sb.append("}");
             if (i < stationColors.size() - 1) sb.append(",");
             sb.append("\n");
@@ -154,6 +257,10 @@ public class StationColorManager {
 
     private void parseJson(String json) {
         stationColors.clear();
+        stationMinDistance.clear();
+        stationPhaseOut.clear();
+        stationOpacity.clear();
+        stationTrailCount.clear();
 
         // Find "stations" array
         int stationsIdx = json.indexOf("\"stations\"");
@@ -198,8 +305,28 @@ public class StationColorManager {
         g = Math.max(0, Math.min(255, g));
         b = Math.max(0, Math.min(255, b));
 
-        stationColors.put(callsign.toUpperCase().trim(),
-                new Color(r, g, b));
+        String key = callsign.toUpperCase().trim();
+        stationColors.put(key, new Color(r, g, b));
+
+        Integer minDist = extractJsonInt(json, "minDistance");
+        if (minDist != null) {
+            stationMinDistance.put(key, Math.max(0, minDist));
+        }
+
+        Integer phaseOut = extractJsonInt(json, "phaseOut");
+        if (phaseOut != null) {
+            stationPhaseOut.put(key, Math.max(0, phaseOut));
+        }
+
+        Integer opacity = extractJsonInt(json, "opacity");
+        if (opacity != null) {
+            stationOpacity.put(key, Math.max(0, Math.min(255, opacity)));
+        }
+
+        Integer trailCount = extractJsonInt(json, "trailCount");
+        if (trailCount != null) {
+            stationTrailCount.put(key, Math.max(0, trailCount));
+        }
     }
 
     // --- Minimal JSON helpers ---

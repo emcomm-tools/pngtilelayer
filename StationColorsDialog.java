@@ -1,5 +1,8 @@
 package org.ka2ddo.yaac.gui.tile;
 
+import org.ka2ddo.yaac.ax25.StationState;
+import org.ka2ddo.yaac.ax25.StationTracker;
+
 import javax.swing.*;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -9,53 +12,64 @@ import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * Modeless dialog for managing callsign→color assignments.
- * Pre-assign colors from a 10-color SAR palette to distinguish
- * operators on the pushpin map layer.
+ * Modeless dialog for managing station settings: visibility, color,
+ * min distance, and phase-out time. Shows all tracked stations plus
+ * any manually pre-configured stations.
  */
 public class StationColorsDialog extends JDialog implements ActionListener {
 
     private final StationColorManager colorManager;
     private final StationPushpinLayer pushpinLayer;
-    private final ColorTableModel tableModel;
-    private final JTable colorTable;
+    private final StationTableModel tableModel;
+    private final JTable stationTable;
 
     public StationColorsDialog(Window parent, StationColorManager colorManager,
                                StationPushpinLayer pushpinLayer) {
-        super(parent, "Station Colors", Dialog.ModalityType.MODELESS);
+        super(parent, "Station Settings", Dialog.ModalityType.MODELESS);
         this.colorManager = colorManager;
         this.pushpinLayer = pushpinLayer;
         setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 
-        tableModel = new ColorTableModel(colorManager);
-        colorTable = new JTable(tableModel);
-        colorTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        colorTable.setRowHeight(24);
+        tableModel = new StationTableModel();
+        stationTable = new JTable(tableModel);
+        stationTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        stationTable.setRowHeight(24);
 
-        // Color swatch renderer for column 1
-        colorTable.getColumnModel().getColumn(1).setCellRenderer(
+        // Column renderers
+        stationTable.getColumnModel().getColumn(2).setCellRenderer(
                 new ColorSwatchRenderer());
 
         // Column widths
-        colorTable.getColumnModel().getColumn(0).setPreferredWidth(160);
-        colorTable.getColumnModel().getColumn(1).setPreferredWidth(120);
+        stationTable.getColumnModel().getColumn(0).setPreferredWidth(35);
+        stationTable.getColumnModel().getColumn(0).setMaxWidth(40);
+        stationTable.getColumnModel().getColumn(1).setPreferredWidth(100);
+        stationTable.getColumnModel().getColumn(2).setPreferredWidth(80);
+        stationTable.getColumnModel().getColumn(3).setPreferredWidth(55);
+        stationTable.getColumnModel().getColumn(4).setPreferredWidth(45);
+        stationTable.getColumnModel().getColumn(5).setPreferredWidth(75);
+        stationTable.getColumnModel().getColumn(6).setPreferredWidth(85);
 
-        // Double-click to change color
-        colorTable.addMouseListener(new MouseAdapter() {
+        // Double-click on color column to change color
+        stationTable.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 if (e.getClickCount() == 2) {
-                    changeSelectedColor();
+                    int col = stationTable.columnAtPoint(e.getPoint());
+                    if (col == 2) {
+                        changeSelectedColor();
+                    }
                 }
             }
         });
 
-        JScrollPane scrollPane = new JScrollPane(colorTable);
-        scrollPane.setPreferredSize(new Dimension(300, 160));
+        JScrollPane scrollPane = new JScrollPane(stationTable);
+        scrollPane.setPreferredSize(new Dimension(530, 200));
 
         // Buttons
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 4));
@@ -70,8 +84,28 @@ public class StationColorsDialog extends JDialog implements ActionListener {
         deleteButton.addActionListener(this);
         buttonPanel.add(deleteButton);
 
+        buttonPanel.add(Box.createHorizontalStrut(8));
+
+        JButton showAll = new JButton("Show All");
+        showAll.setActionCommand("showAll");
+        showAll.addActionListener(this);
+        buttonPanel.add(showAll);
+
+        JButton hideAll = new JButton("Hide All");
+        hideAll.setActionCommand("hideAll");
+        hideAll.addActionListener(this);
+        buttonPanel.add(hideAll);
+
+        buttonPanel.add(Box.createHorizontalStrut(8));
+
+        JButton refresh = new JButton("Refresh");
+        refresh.setActionCommand("refresh");
+        refresh.addActionListener(this);
+        buttonPanel.add(refresh);
+
         // Info label
-        JLabel infoLabel = new JLabel("Unassigned stations use default red.");
+        JLabel infoLabel = new JLabel(
+                "Double-click Color to change. Unassigned = default red.");
         infoLabel.setHorizontalAlignment(SwingConstants.CENTER);
         infoLabel.setFont(infoLabel.getFont().deriveFont(Font.ITALIC, 11f));
 
@@ -97,6 +131,23 @@ public class StationColorsDialog extends JDialog implements ActionListener {
             case "delete":
                 deleteSelected();
                 break;
+            case "showAll":
+                for (int i = 0; i < tableModel.getRowCount(); i++) {
+                    String cs = tableModel.getCallsignAt(i);
+                    if (cs != null) pushpinLayer.setStationVisible(cs, true);
+                }
+                tableModel.fireTableDataChanged();
+                break;
+            case "hideAll":
+                for (int i = 0; i < tableModel.getRowCount(); i++) {
+                    String cs = tableModel.getCallsignAt(i);
+                    if (cs != null) pushpinLayer.setStationVisible(cs, false);
+                }
+                tableModel.fireTableDataChanged();
+                break;
+            case "refresh":
+                tableModel.refresh();
+                break;
         }
     }
 
@@ -112,11 +163,22 @@ public class StationColorsDialog extends JDialog implements ActionListener {
     }
 
     private void deleteSelected() {
-        int row = colorTable.getSelectedRow();
+        int row = stationTable.getSelectedRow();
         if (row < 0) return;
 
         String callsign = tableModel.getCallsignAt(row);
         if (callsign == null) return;
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Delete station " + callsign + "?",
+                "Confirm Delete", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION) return;
+
+        // Remove from StationTracker if tracked
+        StationState ss = StationTracker.getInstance().getTrackedObject(callsign);
+        if (ss != null) {
+            StationTracker.getInstance().deleteStation(ss);
+        }
 
         colorManager.removeColor(callsign);
         colorManager.saveColors();
@@ -125,7 +187,7 @@ public class StationColorsDialog extends JDialog implements ActionListener {
     }
 
     private void changeSelectedColor() {
-        int row = colorTable.getSelectedRow();
+        int row = stationTable.getSelectedRow();
         if (row < 0) return;
 
         String existing = tableModel.getCallsignAt(row);
@@ -135,7 +197,6 @@ public class StationColorsDialog extends JDialog implements ActionListener {
         String callsign = showCallsignColorChooser(existing, result);
         if (callsign == null) return;
 
-        // If callsign changed, remove old entry
         if (!callsign.equals(existing)) {
             colorManager.removeColor(existing);
         }
@@ -217,27 +278,42 @@ public class StationColorsDialog extends JDialog implements ActionListener {
         return callField.getText().trim().toUpperCase();
     }
 
-    // --- Table model ---
+    // --- Table model (union of tracked + manually configured stations) ---
 
-    private static class ColorTableModel extends AbstractTableModel {
+    private class StationTableModel extends AbstractTableModel {
 
-        private static final String[] COLUMNS = {"Callsign", "Color"};
-        private final StationColorManager manager;
+        private static final String[] COLUMNS = {
+                "Vis", "Callsign", "Color", "Opacity", "Trails", "Min Dist (m)", "Phase Out (min)"
+        };
         private final List<String> callsigns = new ArrayList<>();
-        private final List<Color> colors = new ArrayList<>();
 
-        ColorTableModel(StationColorManager manager) {
-            this.manager = manager;
+        StationTableModel() {
             refresh();
         }
 
         void refresh() {
             callsigns.clear();
-            colors.clear();
-            for (Map.Entry<String, Color> e : manager.getAssignments().entrySet()) {
-                callsigns.add(e.getKey());
-                colors.add(e.getValue());
+            Set<String> seen = new LinkedHashSet<>();
+
+            // Add all tracked stations
+            StationState[] stations = StationTracker.getInstance()
+                    .getCurrentTrackedObjectArray();
+            if (stations != null) {
+                for (StationState ss : stations) {
+                    if (ss == null) continue;
+                    if (ss.getLatitude() == 0.0
+                            && ss.getLongitude() == 0.0) continue;
+                    seen.add(ss.getIdentifier().toUpperCase().trim());
+                }
             }
+
+            // Add manually configured stations not yet tracked
+            for (String cs : colorManager.getAssignments().keySet()) {
+                seen.add(cs);
+            }
+
+            callsigns.addAll(seen);
+            callsigns.sort(String.CASE_INSENSITIVE_ORDER);
             fireTableDataChanged();
         }
 
@@ -262,9 +338,62 @@ public class StationColorsDialog extends JDialog implements ActionListener {
         }
 
         @Override
+        public Class<?> getColumnClass(int column) {
+            if (column == 0) return Boolean.class;
+            if (column >= 3) return Integer.class;
+            return Object.class;
+        }
+
+        @Override
+        public boolean isCellEditable(int row, int col) {
+            return col == 0 || col >= 3;
+        }
+
+        // Note: column indices after adding "Trails" at position 4:
+        // 0=Vis, 1=Callsign, 2=Color, 3=Opacity, 4=Trails, 5=Min Dist, 6=Phase Out
+
+        @Override
         public Object getValueAt(int row, int col) {
-            if (col == 0) return callsigns.get(row);
-            return colors.get(row);
+            String cs = callsigns.get(row);
+            switch (col) {
+                case 0:
+                    return pushpinLayer.isStationVisible(cs);
+                case 1:
+                    return cs;
+                case 2:
+                    return colorManager.getColor(cs);
+                case 3:
+                    return colorManager.getOpacity(cs);
+                case 4:
+                    return colorManager.getTrailCount(cs);
+                case 5:
+                    return colorManager.getMinDistance(cs);
+                case 6:
+                    return colorManager.getPhaseOut(cs);
+                default:
+                    return null;
+            }
+        }
+
+        @Override
+        public void setValueAt(Object value, int row, int col) {
+            String cs = callsigns.get(row);
+            if (col == 0 && value instanceof Boolean) {
+                pushpinLayer.setStationVisible(cs, (Boolean) value);
+            } else if (value instanceof Integer) {
+                int val = Math.max(0, (Integer) value);
+                if (col == 3) {
+                    colorManager.setOpacity(cs, val);
+                } else if (col == 4) {
+                    colorManager.setTrailCount(cs, val);
+                } else if (col == 5) {
+                    colorManager.setMinDistance(cs, val);
+                } else if (col == 6) {
+                    colorManager.setPhaseOut(cs, val);
+                }
+                colorManager.saveColors();
+                if (pushpinLayer != null) pushpinLayer.repaint();
+            }
         }
     }
 
@@ -283,10 +412,8 @@ public class StationColorsDialog extends JDialog implements ActionListener {
                 if (!isSelected) {
                     label.setBackground(c);
                 } else {
-                    // Darken slightly when selected so selection is visible
                     label.setBackground(c.darker());
                 }
-                // Find color name
                 String name = colorName(c);
                 label.setText(name != null ? name : String.format("#%02X%02X%02X",
                         c.getRed(), c.getGreen(), c.getBlue()));

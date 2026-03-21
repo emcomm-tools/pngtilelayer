@@ -41,7 +41,7 @@ public class PNGTilePluginProvider extends Provider {
         return new AbstractMenuAction[]{
                 new MapSourcesMenuAction(),
                 new StationColorsMenuAction(),
-                new StationVisibilityMenuAction()
+                new SARObjectsMenuAction()
         };
     }
 
@@ -82,13 +82,13 @@ public class PNGTilePluginProvider extends Provider {
     }
 
     /**
-     * Menu action: View → Station Colors...
+     * Menu action: View → Station Settings...
      */
     private static class StationColorsMenuAction extends AbstractMenuAction {
 
         StationColorsMenuAction() {
             super("StationColors", new String[]{"menu.View"});
-            putValue(NAME, "Station Colors...");
+            putValue(NAME, "Station Settings...");
         }
 
         @Override
@@ -110,13 +110,13 @@ public class PNGTilePluginProvider extends Provider {
     }
 
     /**
-     * Menu action: View → Station Visibility...
+     * Menu action: View → SAR Objects...
      */
-    private static class StationVisibilityMenuAction extends AbstractMenuAction {
+    private static class SARObjectsMenuAction extends AbstractMenuAction {
 
-        StationVisibilityMenuAction() {
-            super("StationVisibility", new String[]{"menu.View"});
-            putValue(NAME, "Station Visibility...");
+        SARObjectsMenuAction() {
+            super("SARObjects", new String[]{"menu.View"});
+            putValue(NAME, "SAR Objects...");
         }
 
         @Override
@@ -125,14 +125,16 @@ public class PNGTilePluginProvider extends Provider {
                 StationPushpinLayer layer =
                         StationPushpinLayerCreator.getLastCreatedLayer();
                 if (layer == null) return;
+                SARObjectManager mgr = layer.getSARObjectManager();
+                if (mgr == null) return;
                 java.awt.Window parent = MainGui.getCurrentlyFocusedWindow();
-                StationVisibilityDialog dialog =
-                        new StationVisibilityDialog(parent, layer);
+                SARObjectsDialog dialog =
+                        new SARObjectsDialog(parent, mgr, layer);
                 dialog.setVisible(true);
             } catch (Exception ex) {
-                System.err.println("StationVisibilityMenuAction: "
-                        + ex.getMessage());
+                System.err.println("SARObjectsMenuAction: " + ex.getMessage());
             }
         }
     }
+
 }

@@ -4,9 +4,11 @@ import com.bbn.openmap.Layer;
 import com.bbn.openmap.MapBean;
 import com.bbn.openmap.MouseDelegator;
 import org.ka2ddo.yaac.gui.GeoMapGuiIfc2;
+import org.ka2ddo.yaac.gui.GeographicalMap;
 import org.ka2ddo.yaac.gui.LayerCreator;
 
 import java.io.File;
+import java.lang.reflect.Field;
 import java.util.prefs.Preferences;
 
 /**
@@ -31,6 +33,22 @@ public class StationPushpinLayerCreator extends LayerCreator {
         StationColorManager colorMgr = new StationColorManager();
         colorMgr.loadColors(yaacConfigDir);
         layer.setColorManager(colorMgr);
+
+        SARObjectManager sarMgr = new SARObjectManager();
+        sarMgr.loadObjects(yaacConfigDir);
+        layer.setSARObjectManager(sarMgr);
+
+        // Disable auto-pan on alerts (hardcoded true in GeographicalMap)
+        if (guiIfc instanceof GeographicalMap) {
+            try {
+                Field f = GeographicalMap.class.getDeclaredField("isMapCenteredOnAlerts");
+                f.setAccessible(true);
+                f.setBoolean(guiIfc, false);
+                System.out.println("[PNGTileLayer] Disabled isMapCenteredOnAlerts");
+            } catch (Exception ex) {
+                System.out.println("[PNGTileLayer] Could not disable isMapCenteredOnAlerts: " + ex);
+            }
+        }
 
         lastCreatedLayer = layer;
         return layer;

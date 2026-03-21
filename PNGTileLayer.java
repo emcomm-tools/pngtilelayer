@@ -371,7 +371,37 @@ public class PNGTileLayer extends Layer implements Runnable, ComponentListener {
      *
      * @return tile image or null if unavailable
      */
+    /** When true, rendering uses fallback source for all tiles */
+    private volatile boolean usingFallback = false;
+
     private BufferedImage resolveTile(TileSource source, int z, int x, int y) {
+        // If we've switched to fallback, use fallback source for everything
+        if (usingFallback) {
+            TileSource fallback = sourceManager.getFallbackSource();
+            if (fallback != null) {
+                return resolveTileFromSource(fallback, z, x, y);
+            }
+        }
+
+        // Try primary source
+        BufferedImage img = resolveTileFromSource(source, z, x, y);
+        if (img != null) return img;
+
+        // Primary failed — switch entire map to fallback
+        TileSource fallback = sourceManager.getFallbackSource();
+        if (fallback != null && fallback != source) {
+            usingFallback = true;
+            clearMemoryCache();
+            return resolveTileFromSource(fallback, z, x, y);
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolve a single tile from a specific source: memory → cache → online.
+     */
+    private BufferedImage resolveTileFromSource(TileSource source, int z, int x, int y) {
         String memKey = source.getName() + "/" + z + "/" + x + "/" + y;
 
         // 1. Check memory cache
@@ -380,7 +410,7 @@ public class PNGTileLayer extends Layer implements Runnable, ComponentListener {
             if (cached != null) return cached;
         }
 
-        // 2. Check SQLite cache — always use cached tile regardless of age
+        // 2. Check SQLite cache
         if (source.hasCache()) {
             BufferedImage img = tileCache.getTile(source.getCacheFile(), z, x, y);
             if (img != null) {
@@ -397,18 +427,6 @@ public class PNGTileLayer extends Layer implements Runnable, ComponentListener {
             // No cache file — fetch online only
             BufferedImage onlineImg = fetchAndCache(source, z, x, y, memKey);
             if (onlineImg != null) return onlineImg;
-        }
-
-        // 3. Try fallback source
-        TileSource fallback = sourceManager.getFallbackSource();
-        if (fallback != null && fallback != source && fallback.hasCache()) {
-            BufferedImage fbImg = tileCache.getTile(fallback.getCacheFile(), z, x, y);
-            if (fbImg != null) {
-                synchronized (memoryCache) {
-                    memoryCache.put(memKey, fbImg);
-                }
-                return fbImg;
-            }
         }
 
         return null;
@@ -447,6 +465,7 @@ public class PNGTileLayer extends Layer implements Runnable, ComponentListener {
 
     public void setActiveSource(TileSource source) {
         sourceManager.setActiveSource(source);
+        usingFallback = false;
         clearMemoryCache();
         regenerate("source changed to " + source.getName());
     }
@@ -461,6 +480,10 @@ public class PNGTileLayer extends Layer implements Runnable, ComponentListener {
 
     public TileSourceManager getSourceManager() {
         return sourceManager;
+    }
+
+    public TileCache getTileCache() {
+        return tileCache;
     }
 
     public void clearMemoryCache() {

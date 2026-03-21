@@ -7,6 +7,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.io.File;
 
 /**
  * Main dialog for managing map tile sources.
@@ -81,6 +82,18 @@ public class MapSourceManagerDialog extends JDialog implements ActionListener {
         fallbackButton.addActionListener(this);
         buttonPanel.add(fallbackButton);
 
+        buttonPanel.add(Box.createHorizontalStrut(12));
+
+        JButton clearCacheButton = new JButton("Clear Cache");
+        clearCacheButton.setActionCommand("clearCache");
+        clearCacheButton.addActionListener(this);
+        buttonPanel.add(clearCacheButton);
+
+        JButton refreshCacheButton = new JButton("Refresh Cache");
+        refreshCacheButton.setActionCommand("refreshCache");
+        refreshCacheButton.addActionListener(this);
+        buttonPanel.add(refreshCacheButton);
+
         // Layer toggle checkboxes
         JPanel checkboxPanel = new JPanel();
         checkboxPanel.setLayout(new BoxLayout(checkboxPanel, BoxLayout.Y_AXIS));
@@ -135,6 +148,12 @@ public class MapSourceManagerDialog extends JDialog implements ActionListener {
                 break;
             case "setFallback":
                 setFallback();
+                break;
+            case "clearCache":
+                clearCache();
+                break;
+            case "refreshCache":
+                refreshCache();
                 break;
         }
     }
@@ -219,6 +238,81 @@ public class MapSourceManagerDialog extends JDialog implements ActionListener {
         if (selectedRow >= 0 && selectedRow < tableModel.getRowCount()) {
             sourceTable.setRowSelectionInterval(selectedRow, selectedRow);
         }
+    }
+
+    private void clearCache() {
+        int row = sourceTable.getSelectedRow();
+        if (row < 0) {
+            JOptionPane.showMessageDialog(this, "Select a source first.",
+                    "Clear Cache", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        TileSource source = tableModel.getSourceAt(row);
+        if (source == null || !source.hasCache()) {
+            JOptionPane.showMessageDialog(this, "This source has no cache file.",
+                    "Clear Cache", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Delete cache for \"" + source.getName() + "\"?\n" +
+                "File: " + source.getCacheFile(),
+                "Clear Cache", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION) return;
+
+        // Close DB connection and delete file
+        if (tileLayer != null) {
+            tileLayer.getTileCache().closeConnection(source.getCacheFile());
+        }
+        File cacheFile = new File(sourceManager.getCacheDirectory() + File.separator + source.getCacheFile());
+        if (cacheFile.exists()) {
+            cacheFile.delete();
+        }
+
+        if (tileLayer != null) {
+            tileLayer.clearMemoryCache();
+            tileLayer.startRegenerate();
+        }
+
+        JOptionPane.showMessageDialog(this, "Cache cleared for " + source.getName(),
+                "Clear Cache", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void refreshCache() {
+        if (tileLayer == null) return;
+
+        int row = sourceTable.getSelectedRow();
+        TileSource source;
+        if (row >= 0) {
+            source = tableModel.getSourceAt(row);
+        } else {
+            source = sourceManager.getActiveSource();
+        }
+
+        if (source == null) return;
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Re-download all visible tiles for \"" + source.getName() + "\"?\n" +
+                "This will replace cached tiles with fresh downloads.",
+                "Refresh Cache", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION) return;
+
+        // Clear memory cache and force re-download by clearing the DB cache for visible tiles
+        if (source.hasCache()) {
+            tileLayer.getTileCache().closeConnection(source.getCacheFile());
+            File cacheFile = new File(sourceManager.getCacheDirectory() + File.separator + source.getCacheFile());
+            if (cacheFile.exists()) {
+                cacheFile.delete();
+            }
+        }
+
+        tileLayer.clearMemoryCache();
+        tileLayer.startRegenerate();
+
+        JOptionPane.showMessageDialog(this, "Cache refreshed for " + source.getName() +
+                "\nVisible tiles are being re-downloaded.",
+                "Refresh Cache", JOptionPane.INFORMATION_MESSAGE);
     }
 
     private void saveAndRefresh() {

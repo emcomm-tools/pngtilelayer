@@ -73,6 +73,11 @@ public class TileCache {
      */
     public TileCache(String cacheDirectory) {
         this.cacheDirectory = cacheDirectory;
+        try {
+            Class.forName("org.sqlite.JDBC", true, this.getClass().getClassLoader());
+        } catch (ClassNotFoundException e) {
+            System.err.println("TileCache: SQLite JDBC driver not found");
+        }
     }
 
     /**
@@ -257,7 +262,9 @@ public class TileCache {
                     parentDir.mkdirs();
                 }
 
-                Connection conn = DriverManager.getConnection("jdbc:sqlite:" + path);
+                // Use SQLite JDBC directly to bypass DriverManager classloader issues
+                org.sqlite.JDBC driver = new org.sqlite.JDBC();
+                Connection conn = driver.connect("jdbc:sqlite:" + path, new java.util.Properties());
                 conn.setAutoCommit(true);
 
                 // Enable WAL mode for better concurrent read performance
@@ -280,6 +287,20 @@ public class TileCache {
                 return null;
             }
         });
+    }
+
+    /**
+     * Close a specific database connection (e.g., before deleting the file).
+     */
+    public void closeConnection(String cacheFile) {
+        Connection conn = connections.remove(cacheFile);
+        if (conn != null) {
+            try {
+                if (!conn.isClosed()) conn.close();
+            } catch (SQLException e) {
+                // ignore
+            }
+        }
     }
 
     /**
